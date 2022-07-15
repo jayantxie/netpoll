@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !rpal && !arm64
-// +build !rpal,!arm64
+//go:build rpal
+// +build rpal
 
 package netpoll
 
+import "C"
+
 import (
+	"errors"
 	"syscall"
 	"unsafe"
 )
@@ -31,24 +34,17 @@ type epollevent struct {
 
 // EpollCtl implements epoll_ctl.
 func EpollCtl(epfd int, op int, fd int, event *epollevent) (err error) {
-	_, _, err = syscall.RawSyscall6(syscall.SYS_EPOLL_CTL, uintptr(epfd), uintptr(op), uintptr(fd), uintptr(unsafe.Pointer(event)), 0, 0)
-	if err == syscall.Errno(0) {
-		err = nil
+	// fmt.Println("RpalEpollCtl tid: ", unix.Gettid())
+	ret := C.rpal_epoll_ctl((*C.rpal_thread_pool_t)(unsafe.Pointer(recverRtp)),
+		C.int(epfd), C.int(op), C.int(fd), (*C.struct_epoll_event)(unsafe.Pointer(event)))
+	if ret != 0 {
+		return errors.New("epoll ctl error")
 	}
-	return err
+	return nil
 }
 
 // EpollWait implements epoll_wait.
-func EpollWait(epfd int, events []epollevent, msec int) (n int, err error) {
-	var r0 uintptr
-	_p0 := unsafe.Pointer(&events[0])
-	if msec == 0 {
-		r0, _, err = syscall.RawSyscall6(syscall.SYS_EPOLL_WAIT, uintptr(epfd), uintptr(_p0), uintptr(len(events)), 0, 0, 0)
-	} else {
-		r0, _, err = syscall.Syscall6(syscall.SYS_EPOLL_WAIT, uintptr(epfd), uintptr(_p0), uintptr(len(events)), uintptr(msec), 0, 0)
-	}
-	if err == syscall.Errno(0) {
-		err = nil
-	}
-	return int(r0), err
+func EpollWait(fd int, events []epollevent, msec int) (int, error) {
+	ret := C.rpal_epoll_wait_ingo(C.int(fd), unsafe.Pointer(&events[0]), C.int(len(events)), C.int(msec))
+	return int(ret), nil
 }

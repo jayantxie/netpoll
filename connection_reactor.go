@@ -21,48 +21,6 @@ import (
 
 // ------------------------------------------ implement FDOperator ------------------------------------------
 
-// onHup means close by poller.
-func (c *connection) onHup(p Poll) error {
-	if c.closeBy(poller) {
-		c.triggerRead()
-		c.triggerWrite(ErrConnClosed)
-		// It depends on closing by user if OnConnect and OnRequest is nil, otherwise it needs to be released actively.
-		// It can be confirmed that the OnRequest goroutine has been exited before closecallback executing,
-		// and it is safe to close the buffer at this time.
-		var onConnect, _ = c.onConnectCallback.Load().(OnConnect)
-		var onRequest, _ = c.onRequestCallback.Load().(OnRequest)
-		if onConnect != nil || onRequest != nil {
-			c.closeCallback(true)
-		}
-	}
-	return nil
-}
-
-// onClose means close by user.
-func (c *connection) onClose() error {
-	if c.closeBy(user) {
-		c.triggerRead()
-		c.triggerWrite(ErrConnClosed)
-		c.closeCallback(true)
-		return nil
-	}
-	if c.isCloseBy(poller) {
-		// Connection with OnRequest of nil
-		// relies on the user to actively close the connection to recycle resources.
-		c.closeCallback(true)
-	}
-	return nil
-}
-
-// closeBuffer recycle input & output LinkBuffer.
-func (c *connection) closeBuffer() {
-	c.inputBuffer.Close()
-	barrierPool.Put(c.inputBarrier)
-
-	c.outputBuffer.Close()
-	barrierPool.Put(c.outputBarrier)
-}
-
 // inputs implements FDOperator.
 func (c *connection) inputs(vs [][]byte) (rs [][]byte) {
 	vs[0] = c.inputBuffer.book(c.bookSize, c.maxSize)
@@ -89,7 +47,7 @@ func (c *connection) inputAck(n int) (err error) {
 		c.maxSize = mallocMax
 	}
 
-	var needTrigger = true
+	needTrigger := true
 	if length == n { // first start onRequest
 		needTrigger = c.onRequest()
 	}
@@ -133,8 +91,8 @@ func (c *connection) flush() error {
 		return nil
 	}
 	// TODO: Let the upper layer pass in whether to use ZeroCopy.
-	var bs = c.outputBuffer.GetBytes(c.outputBarrier.bs)
-	var n, err = sendmsg(c.fd, bs, c.outputBarrier.ivs, false && c.supportZeroCopy)
+	bs := c.outputBuffer.GetBytes(c.outputBarrier.bs)
+	n, err := sendmsg(c.fd, bs, c.outputBarrier.ivs, false && c.supportZeroCopy)
 	if err != nil && err != syscall.EAGAIN {
 		return Exception(err, "when flush")
 	}

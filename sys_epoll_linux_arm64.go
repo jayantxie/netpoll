@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !rpal
+// +build !rpal
+
 package netpoll
 
 import (
@@ -39,7 +42,7 @@ func EpollCtl(epfd int, op int, fd int, event *epollevent) (err error) {
 // EpollWait implements epoll_wait.
 func EpollWait(epfd int, events []epollevent, msec int) (n int, err error) {
 	var r0 uintptr
-	var _p0 = unsafe.Pointer(&events[0])
+	_p0 := unsafe.Pointer(&events[0])
 	if msec == 0 {
 		r0, _, err = syscall.RawSyscall6(syscall.SYS_EPOLL_PWAIT, uintptr(epfd), uintptr(_p0), uintptr(len(events)), 0, 0, 0)
 	} else {

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !rpal
-// +build !rpal
+//go:build rpal
+// +build rpal
 
 package netpoll
 
@@ -35,7 +35,11 @@ func setLoadBalance(lb LoadBalance) error {
 var pollmanager *manager
 
 func init() {
-	loops := runtime.GOMAXPROCS(0)/20 + 1
+	loops := runtime.GORPALPROCS()
+	if loops == 0 {
+		loops = runtime.GOMAXPROCS(0)
+	}
+	loops = loops/20 + 1
 	pollmanager = &manager{}
 	pollmanager.SetLoadBalance(RoundRobin)
 	pollmanager.SetNumLoops(loops)
@@ -99,11 +103,21 @@ func (m *manager) Close() error {
 
 // Run all pollers.
 func (m *manager) Run() error {
+	ret := rpalThreadPoolCreate(m.NumLoops)
+	if ret != 0 {
+		fmt.Println("Rpal ThreadPool Error")
+		panic("Thread Pool Create Failed")
+	}
+	ret = rpalEnableService()
+	if ret != 0 {
+		fmt.Println("Rpal Enable Service Error")
+		panic("Rpal Enable Failed")
+	}
 	// new poll to fill delta.
 	for idx := len(m.polls); idx < m.NumLoops; idx++ {
 		poll := openPoll()
 		m.polls = append(m.polls, poll)
-		go poll.Wait()
+		runtime.NewRpalPoll(poll.Wait)
 	}
 	// LoadBalance must be set before calling Run, otherwise it will panic.
 	m.balance.Rebalance(m.polls)

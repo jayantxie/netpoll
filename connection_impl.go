@@ -15,7 +15,6 @@
 package netpoll
 
 import (
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -25,29 +24,11 @@ const (
 	defaultZeroCopyTimeoutSec = 60
 )
 
-// connection is the implement of Connection
-type connection struct {
-	netFD
-	onEvent
-	locker
-	operator        *FDOperator
-	readTimeout     time.Duration
-	readTimer       *time.Timer
-	readTrigger     chan struct{}
-	waitReadSize    int32
-	writeTrigger    chan error
-	inputBuffer     *LinkBuffer
-	outputBuffer    *LinkBuffer
-	inputBarrier    *barrier
-	outputBarrier   *barrier
-	supportZeroCopy bool
-	maxSize         int // The maximum size of data between two Release().
-	bookSize        int // The size of data that can be read at once.
-}
-
-var _ Connection = &connection{}
-var _ Reader = &connection{}
-var _ Writer = &connection{}
+var (
+	_ Connection = &connection{}
+	_ Reader     = &connection{}
+	_ Writer     = &connection{}
+)
 
 // Reader implements Connection.
 func (c *connection) Reader() Reader {
@@ -155,7 +136,7 @@ func (c *connection) Until(delim byte) (line []byte, err error) {
 		l = c.inputBuffer.Len()
 		i := c.inputBuffer.indexByte(delim, n)
 		if i < 0 {
-			n = l //skip all exists bytes
+			n = l // skip all exists bytes
 			continue
 		}
 		return c.Next(i + 1)
@@ -286,43 +267,6 @@ func (c *connection) Close() error {
 
 // ------------------------------------------ private ------------------------------------------
 
-var barrierPool = sync.Pool{
-	New: func() interface{} {
-		return &barrier{
-			bs:  make([][]byte, barriercap),
-			ivs: make([]syscall.Iovec, barriercap),
-		}
-	},
-}
-
-// init initialize the connection with options
-func (c *connection) init(conn Conn, opts *options) (err error) {
-	// init buffer, barrier, finalizer
-	c.readTrigger = make(chan struct{}, 1)
-	c.writeTrigger = make(chan error, 1)
-	c.bookSize, c.maxSize = block1k/2, pagesize
-	c.inputBuffer, c.outputBuffer = NewLinkBuffer(pagesize), NewLinkBuffer()
-	c.inputBarrier, c.outputBarrier = barrierPool.Get().(*barrier), barrierPool.Get().(*barrier)
-
-	c.initNetFD(conn) // conn must be *netFD{}
-	c.initFDOperator()
-	c.initFinalizer()
-
-	syscall.SetNonblock(c.fd, true)
-	// enable TCP_NODELAY by default
-	switch c.network {
-	case "tcp", "tcp4", "tcp6":
-		setTCPNoDelay(c.fd, true)
-	}
-	// check zero-copy
-	if setZeroCopy(c.fd) == nil && setBlockZeroCopySend(c.fd, defaultZeroCopyTimeoutSec, 0) == nil {
-		c.supportZeroCopy = true
-	}
-
-	// connection initialized and prepare options
-	return c.onPrepare(opts)
-}
-
 func (c *connection) initNetFD(conn Conn) {
 	if nfd, ok := conn.(*netFD); ok {
 		c.netFD = *nfd
@@ -330,23 +274,10 @@ func (c *connection) initNetFD(conn Conn) {
 	}
 	c.netFD = netFD{
 		fd:         conn.Fd(),
+		sfd:        -1,
 		localAddr:  conn.LocalAddr(),
 		remoteAddr: conn.RemoteAddr(),
 	}
-}
-
-func (c *connection) initFDOperator() {
-	op := allocop()
-	op.FD = c.fd
-	op.OnRead, op.OnWrite, op.OnHup = nil, nil, c.onHup
-	op.Inputs, op.InputAck = c.inputs, c.inputAck
-	op.Outputs, op.OutputAck = c.outputs, c.outputAck
-
-	// if connection has been registered, must reuse poll here.
-	if c.pd != nil && c.pd.operator != nil {
-		op.poll = c.pd.operator.poll
-	}
-	c.operator = op
 }
 
 func (c *connection) initFinalizer() {

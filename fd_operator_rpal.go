@@ -12,14 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !rpal
-// +build !rpal
+//go:build rpal
+// +build rpal
 
 package netpoll
 
 import (
 	"runtime"
 	"sync/atomic"
+	"unsafe"
 )
 
 // FDOperator is a collection of operations on file descriptors.
@@ -37,6 +38,11 @@ type FDOperator struct {
 	// Fns are only called by the poll when handles connection events.
 	Inputs   func(vs [][]byte) (rs [][]byte)
 	InputAck func(n int) (err error)
+
+	// RpalInputs return ptrs to connection.
+	RpalInputs    func() (rs []unsafe.Pointer)
+	RpalInputAck  func(n int) (err error)
+	RpalOutputAck func() (err error)
 
 	// Outputs will locked if len(rs) > 0, which need unlocked by OutputAck.
 	Outputs   func(vs [][]byte) (rs [][]byte, supportZeroCopy bool)
@@ -89,5 +95,7 @@ func (op *FDOperator) reset() {
 	op.OnRead, op.OnWrite, op.OnHup = nil, nil, nil
 	op.Inputs, op.InputAck = nil, nil
 	op.Outputs, op.OutputAck = nil, nil
+	op.RpalInputs, op.RpalInputAck = nil, nil
+	op.RpalOutputAck = nil
 	op.poll = nil
 }

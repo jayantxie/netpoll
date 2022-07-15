@@ -12,20 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !rpal && race
-// +build !rpal,race
+//go:build rpal && !race
+// +build rpal,!race
 
 package netpoll
 
 import (
 	"log"
-	"runtime"
-	"sync"
 	"sync/atomic"
 	"syscall"
+	"unsafe"
 )
 
-// mock no race poll
+// Includes defaultPoll/multiPoll/uringPoll...
 func openPoll() Poll {
 	return openDefaultPoll()
 }
@@ -43,31 +42,37 @@ func openDefaultPoll() *defaultPoll {
 		syscall.Close(p)
 		panic(err)
 	}
-	poll.wfd = int(r0)
-	poll.Control(&FDOperator{FD: poll.wfd}, PollReadable)
+
+	poll.Reset = poll.reset
+	poll.Handler = poll.handler
+
+	poll.wop = &FDOperator{FD: int(r0)}
+	poll.Control(poll.wop, PollReadable)
 	return &poll
 }
 
 type defaultPoll struct {
 	pollArgs
-	fd      int    // epoll fd
-	wfd     int    // wake epoll wait
-	buf     []byte // read wfd trigger msg
-	trigger uint32 // trigger flag
-	m       sync.Map
+	fd      int         // epoll fd
+	wop     *FDOperator // eventfd, wake epoll_wait
+	buf     []byte      // read wfd trigger msg
+	trigger uint32      // trigger flag
+	// fns for handle events
+	Reset   func(size, caps int)
+	Handler func(events []epollevent) (closed bool)
 }
 
 type pollArgs struct {
 	size     int
 	caps     int
-	events   []syscall.EpollEvent
+	events   []epollevent
 	barriers []barrier
 	hups     []func(p Poll) error
 }
 
 func (a *pollArgs) reset(size, caps int) {
 	a.size, a.caps = size, caps
-	a.events, a.barriers = make([]syscall.EpollEvent, size), make([]barrier, size)
+	a.events, a.barriers = make([]epollevent, size), make([]barrier, size)
 	for i := range a.barriers {
 		a.barriers[i].bs = make([][]byte, a.caps)
 		a.barriers[i].ivs = make([]syscall.Iovec, a.caps)
@@ -76,56 +81,54 @@ func (a *pollArgs) reset(size, caps int) {
 
 // Wait implements Poll.
 func (p *defaultPoll) Wait() (err error) {
+	rpalThreadInitialize()
 	// init
 	caps, msec, n := barriercap, -1, 0
-	p.reset(128, caps)
+	p.Reset(128, caps)
 	// wait
 	for {
 		if n == p.size && p.size < 128*1024 {
-			p.reset(p.size<<1, caps)
+			p.Reset(p.size<<1, caps)
 		}
-		n, err = syscall.EpollWait(p.fd, p.events, msec)
+		n, err = EpollWait(p.fd, p.events, msec)
 		if err != nil && err != syscall.EINTR {
 			return err
 		}
 		if n <= 0 {
 			msec = -1
-			runtime.Gosched()
+			// runtime.Gosched()
 			continue
 		}
 		msec = 0
-		if p.handler(p.events[:n]) {
+		if p.Handler(p.events[:n]) {
 			return nil
 		}
 	}
 }
 
-func (p *defaultPoll) handler(events []syscall.EpollEvent) (closed bool) {
+func (p *defaultPoll) handler(events []epollevent) (closed bool) {
 	for i := range events {
-		fd := int(events[i].Fd)
-		// trigger or exit gracefully
-		if fd == p.wfd {
-			// must clean trigger first
-			syscall.Read(p.wfd, p.buf)
-			atomic.StoreUint32(&p.trigger, 0)
-			// if closed & exit
-			if p.buf[0] > 0 {
-				syscall.Close(p.wfd)
-				syscall.Close(p.fd)
-				return true
-			}
-			continue
-		}
-		tmp, ok := p.m.Load(fd)
-		if !ok {
-			continue
-		}
-		operator := tmp.(*FDOperator)
+		operator := *(**FDOperator)(unsafe.Pointer(&events[i].data))
 		if !operator.do() {
 			continue
 		}
+		// trigger or exit gracefully
+		if operator.FD == p.wop.FD {
+			// must clean trigger first
+			syscall.Read(p.wop.FD, p.buf)
+			atomic.StoreUint32(&p.trigger, 0)
+			// if closed & exit
+			if p.buf[0] > 0 {
+				syscall.Close(p.wop.FD)
+				syscall.Close(p.fd)
+				operator.done()
+				return true
+			}
+			operator.done()
+			continue
+		}
 
-		evt := events[i].Events
+		evt := events[i].events
 		// check poll in
 		if evt&syscall.EPOLLIN != 0 {
 			if operator.OnRead != nil {
@@ -133,14 +136,29 @@ func (p *defaultPoll) handler(events []syscall.EpollEvent) (closed bool) {
 				operator.OnRead(p)
 			} else {
 				// for connection
-				bs := operator.Inputs(p.barriers[i].bs)
-				if len(bs) > 0 {
-					n, err := readv(operator.FD, bs, p.barriers[i].ivs)
-					operator.InputAck(n)
-					if err != nil && err != syscall.EAGAIN && err != syscall.EINTR {
-						log.Printf("readv(fd=%d) failed: %s", operator.FD, err.Error())
-						p.appendHup(operator)
-						continue
+				if evt&EPOLLRPALIN != 0 {
+					bs := operator.RpalInputs()
+					if len(bs) > 0 {
+						n, err := rpalReadMsg(operator.FD, bs)
+						operator.RpalInputAck(n)
+						if err != nil {
+							log.Printf("rpalReadMsg(fd=%d) failed: %s", operator.FD, err.Error())
+							p.appendHup(operator)
+							continue
+						}
+					}
+				} else if evt&EPOLLRPALACK != 0 {
+					operator.RpalOutputAck()
+				} else {
+					bs := operator.Inputs(p.barriers[i].bs)
+					if len(bs) > 0 {
+						n, err := readv(operator.FD, bs, p.barriers[i].ivs)
+						operator.InputAck(n)
+						if err != nil && err != syscall.EAGAIN && err != syscall.EINTR {
+							log.Printf("readv(fd=%d) failed: %s", operator.FD, err.Error())
+							p.appendHup(operator)
+							continue
+						}
 					}
 				}
 			}
@@ -189,15 +207,7 @@ func (p *defaultPoll) handler(events []syscall.EpollEvent) (closed bool) {
 
 // Close will write 10000000
 func (p *defaultPoll) Close() error {
-	_, err := syscall.Write(p.wfd, []byte{1, 0, 0, 0, 0, 0, 0, 0})
-	// delete all *FDOperator
-	p.m.Range(func(key, value interface{}) bool {
-		operator, _ := value.(*FDOperator)
-		if operator.OnHup != nil {
-			operator.OnHup(p)
-		}
-		return true
-	})
+	_, err := syscall.Write(p.wop.FD, []byte{1, 0, 0, 0, 0, 0, 0, 0})
 	return err
 }
 
@@ -207,37 +217,33 @@ func (p *defaultPoll) Trigger() error {
 		return nil
 	}
 	// MAX(eventfd) = 0xfffffffffffffffe
-	_, err := syscall.Write(p.wfd, []byte{0, 0, 0, 0, 0, 0, 0, 1})
+	_, err := syscall.Write(p.wop.FD, []byte{0, 0, 0, 0, 0, 0, 0, 1})
 	return err
 }
 
 // Control implements Poll.
 func (p *defaultPoll) Control(operator *FDOperator, event PollEvent) error {
 	var op int
-	var evt syscall.EpollEvent
-	evt.Fd = int32(operator.FD)
+	var evt epollevent
+	*(**FDOperator)(unsafe.Pointer(&evt.data)) = operator
 	switch event {
 	case PollReadable:
 		operator.inuse()
-		p.m.Store(operator.FD, operator)
-		op, evt.Events = syscall.EPOLL_CTL_ADD, syscall.EPOLLIN|syscall.EPOLLRDHUP|syscall.EPOLLERR
+		op, evt.events = syscall.EPOLL_CTL_ADD, syscall.EPOLLIN|syscall.EPOLLRDHUP|syscall.EPOLLERR
 	case PollModReadable:
 		operator.inuse()
-		p.m.Store(operator.FD, operator)
-		op, evt.Events = syscall.EPOLL_CTL_MOD, syscall.EPOLLIN|syscall.EPOLLRDHUP|syscall.EPOLLERR
+		op, evt.events = syscall.EPOLL_CTL_MOD, syscall.EPOLLIN|syscall.EPOLLRDHUP|syscall.EPOLLERR
 	case PollDetach:
-		p.m.Delete(operator.FD)
-		op, evt.Events = syscall.EPOLL_CTL_DEL, syscall.EPOLLIN|syscall.EPOLLOUT|syscall.EPOLLRDHUP|syscall.EPOLLERR
+		op, evt.events = syscall.EPOLL_CTL_DEL, syscall.EPOLLIN|syscall.EPOLLOUT|syscall.EPOLLRDHUP|syscall.EPOLLERR
 	case PollWritable:
 		operator.inuse()
-		p.m.Store(operator.FD, operator)
-		op, evt.Events = syscall.EPOLL_CTL_ADD, EPOLLET|syscall.EPOLLOUT|syscall.EPOLLRDHUP|syscall.EPOLLERR
+		op, evt.events = syscall.EPOLL_CTL_ADD, EPOLLET|syscall.EPOLLOUT|syscall.EPOLLRDHUP|syscall.EPOLLERR
 	case PollR2RW:
-		op, evt.Events = syscall.EPOLL_CTL_MOD, syscall.EPOLLIN|syscall.EPOLLOUT|syscall.EPOLLRDHUP|syscall.EPOLLERR
+		op, evt.events = syscall.EPOLL_CTL_MOD, syscall.EPOLLIN|syscall.EPOLLOUT|syscall.EPOLLRDHUP|syscall.EPOLLERR
 	case PollRW2R:
-		op, evt.Events = syscall.EPOLL_CTL_MOD, syscall.EPOLLIN|syscall.EPOLLRDHUP|syscall.EPOLLERR
+		op, evt.events = syscall.EPOLL_CTL_MOD, syscall.EPOLLIN|syscall.EPOLLRDHUP|syscall.EPOLLERR
 	}
-	return syscall.EpollCtl(p.fd, op, operator.FD, &evt)
+	return EpollCtl(p.fd, op, operator.FD, &evt)
 }
 
 func (p *defaultPoll) appendHup(operator *FDOperator) {

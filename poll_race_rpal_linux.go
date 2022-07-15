@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !rpal && race
-// +build !rpal,race
+//go:build rpal && race
+// +build rpal,race
 
 package netpoll
 
 import (
 	"log"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -76,6 +75,7 @@ func (a *pollArgs) reset(size, caps int) {
 
 // Wait implements Poll.
 func (p *defaultPoll) Wait() (err error) {
+	rpalThreadInitialize()
 	// init
 	caps, msec, n := barriercap, -1, 0
 	p.reset(128, caps)
@@ -90,7 +90,7 @@ func (p *defaultPoll) Wait() (err error) {
 		}
 		if n <= 0 {
 			msec = -1
-			runtime.Gosched()
+			// runtime.Gosched()
 			continue
 		}
 		msec = 0
@@ -133,14 +133,29 @@ func (p *defaultPoll) handler(events []syscall.EpollEvent) (closed bool) {
 				operator.OnRead(p)
 			} else {
 				// for connection
-				bs := operator.Inputs(p.barriers[i].bs)
-				if len(bs) > 0 {
-					n, err := readv(operator.FD, bs, p.barriers[i].ivs)
-					operator.InputAck(n)
-					if err != nil && err != syscall.EAGAIN && err != syscall.EINTR {
-						log.Printf("readv(fd=%d) failed: %s", operator.FD, err.Error())
-						p.appendHup(operator)
-						continue
+				if evt&EPOLLRPALIN != 0 {
+					bs := operator.RpalInputs()
+					if len(bs) > 0 {
+						n, err := rpalReadMsg(operator.FD, bs)
+						operator.RpalInputAck(n)
+						if err != nil {
+							log.Printf("rpalReadMsg(fd=%d) failed: %s", operator.FD, err.Error())
+							p.appendHup(operator)
+							continue
+						}
+					}
+				} else if evt&EPOLLRPALACK != 0 {
+					operator.RpalOutputAck()
+				} else {
+					bs := operator.Inputs(p.barriers[i].bs)
+					if len(bs) > 0 {
+						n, err := readv(operator.FD, bs, p.barriers[i].ivs)
+						operator.InputAck(n)
+						if err != nil && err != syscall.EAGAIN && err != syscall.EINTR {
+							log.Printf("readv(fd=%d) failed: %s", operator.FD, err.Error())
+							p.appendHup(operator)
+							continue
+						}
 					}
 				}
 			}
