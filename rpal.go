@@ -79,7 +79,7 @@ func (e RPALERR) Error() string {
 
 var (
 	defaultRpalHandshakeTimeout = 2 * time.Second
-	RpalClientPreface           = []byte("rpal_hi")
+	RpalClientPreface           = []byte("rpal say hello")
 )
 
 func ClientRpalHandshake(conn Connection, timeout time.Duration) (err error) {
@@ -89,7 +89,7 @@ func ClientRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 	errChan := make(chan error)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	runTask(ctx, func() {
-		zw, zr, c := conn.Writer(), conn.Reader(), conn.(*connection)
+		zw, zr, c := conn.Writer(), conn.Reader(), conn.(*UnixConnection)
 		// write client preface
 		_, err = zw.WriteBinary(RpalClientPreface)
 		if err != nil {
@@ -119,13 +119,14 @@ func ClientRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 			errChan <- err
 			return
 		}
-		binary.BigEndian.PutUint32(buf, uint32(rpalGetId()))
+		binary.BigEndian.PutUint32(buf, 1)
 		if err = zw.Flush(); err != nil {
 			errChan <- err
 			return
 		}
 		// set sfd
 		c.sfd = rpalFdmap(c.fd)
+		errChan <- nil
 	})
 	select {
 	case <-ctx.Done():
@@ -144,9 +145,9 @@ func ServerRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 	errChan := make(chan error)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	runTask(ctx, func() {
-		zw, zr, c := conn.Writer(), conn.Reader(), conn.(*connection)
+		zw, zr, c := conn.Writer(), conn.Reader(), conn.(*UnixConnection)
 		// read client preface
-		preface, err := zr.ReadBinary(4)
+		preface, err := zr.ReadBinary(len(RpalClientPreface))
 		if err != nil {
 			errChan <- err
 			return
@@ -161,7 +162,7 @@ func ServerRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 			errChan <- err
 			return
 		}
-		binary.BigEndian.PutUint32(buf, uint32(rpalGetId()))
+		binary.BigEndian.PutUint32(buf, 0)
 		if err = zw.Flush(); err != nil {
 			errChan <- err
 			return
@@ -181,6 +182,7 @@ func ServerRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 		}
 		// set sfd
 		c.sfd = rpalFdmap(c.fd)
+		errChan <- nil
 	})
 
 	select {
@@ -217,9 +219,9 @@ func rpalThreadInitialize() int {
 	return int(ret)
 }
 
-func rpalGetId() int {
-	return int(C.rpal_get_id())
-}
+//func rpalGetId() int {
+//	return int(C.rpal_get_id())
+//}
 
 func rpalRequestService(id int) (*C.rpal_thread_pool_t, int) {
 	var senderRtp C.rpal_thread_pool_t
