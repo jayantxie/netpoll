@@ -17,6 +17,12 @@
 
 package netpoll
 
+/*
+#cgo LDFLAGS: -lrpal -L/data04/VMs/xzy-kitex/xzy-data/rpal-lib/build
+#cgo CFLAGS: -I/data04/VMs/xzy-kitex/xzy-data/rpal-lib/
+#include <rpal.h>
+#include <sys/mman.h>
+*/
 import "C"
 
 import (
