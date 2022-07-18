@@ -145,14 +145,14 @@ func ServerRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 	errChan := make(chan error)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	runTask(ctx, func() {
-		zw, zr, c := conn.Writer(), conn.Reader(), conn.(*UnixConnection)
+		zw, zr, c := conn.Writer(), conn.Reader(), conn.(*connection)
 		// read client preface
 		preface, err := zr.ReadBinary(len(RpalClientPreface))
 		if err != nil {
 			errChan <- err
 			return
 		}
-		if bytes.Equal(preface, RpalClientPreface) {
+		if !bytes.Equal(preface, RpalClientPreface) {
 			errChan <- fmt.Errorf("cannot handshake, preface mismatch! %s", string(preface))
 			return
 		}
