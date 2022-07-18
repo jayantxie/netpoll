@@ -119,7 +119,7 @@ func ClientRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 			errChan <- err
 			return
 		}
-		binary.BigEndian.PutUint32(buf, 1)
+		binary.BigEndian.PutUint32(buf, uint32(rpalGetServiceId()))
 		if err = zw.Flush(); err != nil {
 			errChan <- err
 			return
@@ -162,7 +162,7 @@ func ServerRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 			errChan <- err
 			return
 		}
-		binary.BigEndian.PutUint32(buf, 0)
+		binary.BigEndian.PutUint32(buf, uint32(rpalGetServiceId()))
 		if err = zw.Flush(); err != nil {
 			errChan <- err
 			return
@@ -219,9 +219,9 @@ func rpalThreadInitialize() int {
 	return int(ret)
 }
 
-//func rpalGetId() int {
-//	return int(C.rpal_get_id())
-//}
+func rpalGetServiceId() int {
+	return int(C.rpal_get_service_id())
+}
 
 func rpalRequestService(id int) (*C.rpal_thread_pool_t, int) {
 	var senderRtp C.rpal_thread_pool_t
