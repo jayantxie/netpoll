@@ -105,12 +105,10 @@ func (m *manager) Close() error {
 func (m *manager) Run() error {
 	ret := rpalThreadPoolCreate(m.NumLoops)
 	if ret != 0 {
-		fmt.Println("Rpal ThreadPool Error")
 		panic("Thread Pool Create Failed")
 	}
 	ret = rpalEnableService()
 	if ret != 0 {
-		fmt.Println("Rpal Enable Service Error")
 		panic("Rpal Enable Failed")
 	}
 	// new poll to fill delta.

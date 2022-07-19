@@ -24,10 +24,12 @@ import (
 )
 
 func NewRpalDialer() Dialer {
-	return &rpalDialer{}
+	return &rpalDialer{supportedInBothSides: true}
 }
 
-type rpalDialer struct{}
+type rpalDialer struct {
+	supportedInBothSides bool
+}
 
 func (d *rpalDialer) DialTimeout(network, address string, timeout time.Duration) (conn net.Conn, err error) {
 	conn, err = d.DialConnection(network, address, timeout)
@@ -57,5 +59,11 @@ func (d *rpalDialer) DialConnection(network, address string, timeout time.Durati
 	default:
 		return nil, net.UnknownNetworkError(network)
 	}
-	return connection, ClientRpalHandshake(connection, 0)
+	if d.supportedInBothSides {
+		err = ClientRpalHandshake(connection, 0)
+		if err == ClientNotRegisteredByRpal || err == ServerNotRegisteredByRpal {
+			d.supportedInBothSides = false
+		}
+	}
+	return connection, err
 }

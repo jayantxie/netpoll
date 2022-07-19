@@ -63,8 +63,10 @@ type rpalBarrier struct {
 }
 
 var (
-	recverRtp *C.rpal_thread_pool_t
-	tcount    int32 = -1
+	recverRtp                 *C.rpal_thread_pool_t
+	tcount                    int32 = -1
+	ClientNotRegisteredByRpal       = errors.New("client not registered by rpal")
+	ServerNotRegisteredByRpal       = errors.New("server not registered by rpal")
 )
 
 type RPALERR uintptr
@@ -83,6 +85,11 @@ var (
 )
 
 func ClientRpalHandshake(conn Connection, timeout time.Duration) (err error) {
+	rpalServiceId := rpalGetServiceId()
+	if rpalServiceId < 0 {
+		// not registered by rpal
+		return ClientNotRegisteredByRpal
+	}
 	if timeout < defaultRpalHandshakeTimeout {
 		timeout = defaultRpalHandshakeTimeout
 	}
@@ -101,25 +108,29 @@ func ClientRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 			return
 		}
 		// read server rpal id
-		buf, err := zr.ReadBinary(4)
+		buf, err := zr.ReadBinary(5)
 		if err != nil {
 			errChan <- err
 			return
 		}
-		serverRpalId := binary.BigEndian.Uint32(buf)
-		if senderRtp, status := rpalRequestService(int(serverRpalId)); status != 0 {
+		serverRpalId := readInt32(buf)
+		if serverRpalId < 0 {
+			errChan <- ServerNotRegisteredByRpal
+			return
+		}
+		if senderRtp, status := rpalRequestService(serverRpalId); status != 0 {
 			errChan <- fmt.Errorf("error request server rpal service: %d, %d", serverRpalId, status)
 			return
 		} else {
 			c.senderRtp = senderRtp
 		}
 		// write client rpal id
-		buf, err = zw.Malloc(4)
+		buf, err = zw.Malloc(5)
 		if err != nil {
 			errChan <- err
 			return
 		}
-		binary.BigEndian.PutUint32(buf, uint32(rpalGetServiceId()))
+		writeInt32(buf, rpalServiceId)
 		if err = zw.Flush(); err != nil {
 			errChan <- err
 			return
@@ -157,24 +168,24 @@ func ServerRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 			return
 		}
 		// write server rpal id
-		buf, err := zw.Malloc(4)
+		buf, err := zw.Malloc(5)
 		if err != nil {
 			errChan <- err
 			return
 		}
-		binary.BigEndian.PutUint32(buf, uint32(rpalGetServiceId()))
+		writeInt32(buf, rpalGetServiceId())
 		if err = zw.Flush(); err != nil {
 			errChan <- err
 			return
 		}
 		// read client rpal id
-		buf, err = zr.ReadBinary(4)
+		buf, err = zr.ReadBinary(5)
 		if err != nil {
 			errChan <- err
 			return
 		}
-		clientRpalId := binary.BigEndian.Uint32(buf)
-		if senderRtp, status := rpalRequestService(int(clientRpalId)); status != 0 {
+		clientRpalId := readInt32(buf)
+		if senderRtp, status := rpalRequestService(clientRpalId); status != 0 {
 			errChan <- fmt.Errorf("error request server rpal service: %d, %d", clientRpalId, status)
 			return
 		} else {
@@ -260,4 +271,22 @@ func rpalCallAck(senderRtp *C.rpal_thread_pool_t, sfd int) (err error) {
 		return fmt.Errorf("error send call ack, sfd: %d, status: %d", sfd, status)
 	}
 	return nil
+}
+
+func writeInt32(buf []byte, id int) {
+	_ = buf[4]
+	if id < 0 {
+		buf[0] = 1
+		id = id * -1
+	}
+	binary.BigEndian.PutUint32(buf[1:], uint32(id))
+}
+
+func readInt32(buf []byte) int {
+	_ = buf[4]
+	flag := 1
+	if buf[0]&1 != 0 {
+		flag = -1
+	}
+	return flag * int(binary.BigEndian.Uint32(buf[1:]))
 }
