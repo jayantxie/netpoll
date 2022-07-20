@@ -133,7 +133,7 @@ func (p *defaultPoll) handler(events []epollevent) (closed bool) {
 		if evt&syscall.EPOLLIN != 0 {
 			if operator.OnRead != nil {
 				// for non-connection
-				operator.OnRead(p)
+				go operator.OnRead(p)
 			} else {
 				// for connection
 				if evt&EPOLLRPALIN != 0 {

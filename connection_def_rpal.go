@@ -336,6 +336,7 @@ func (c *connection) rpalInputAck(n int) (err error) {
 	}
 	for i := 0; i < n; i++ {
 		c.inputObjects.Write(c.inputObjectsBarrier.bs[i])
+		c.inputObjectsBarrier.bs[i] = nil
 	}
 	c.inputObjects.Flush()
 	if c.onRpalRequest() && n >= int(atomic.LoadInt32(&c.rpalWaitReadSize)) {

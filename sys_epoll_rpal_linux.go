@@ -52,6 +52,6 @@ func EpollCtl(epfd int, op int, fd int, event *epollevent) (err error) {
 
 // EpollWait implements epoll_wait.
 func EpollWait(fd int, events []epollevent, msec int) (int, error) {
-	ret := C.rpal_epoll_wait_ingo(C.int(fd), unsafe.Pointer(&events[0]), C.int(len(events)), C.int(msec))
+	ret := C.rpal_epoll_wait(C.int(fd), (*C.struct_epoll_event)(unsafe.Pointer(&events[0])), C.int(len(events)), C.int(msec))
 	return int(ret), nil
 }

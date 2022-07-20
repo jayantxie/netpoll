@@ -225,8 +225,7 @@ func rpalThreadInitialize() int {
 	if thread >= int32(recverRtp.nr_threads) {
 		panic("Thread Init Error, thread: ")
 	}
-	ptr1 := (unsafe.Pointer(uintptr(unsafe.Pointer(recverRtp.rtis)) + uintptr(C.sizeof_rpal_thread_info_t*C.int(thread))))
-	ret := C.rpal_thread_initialize_ingo(ptr1)
+	ret := C.rpal_thread_initialize((*C.struct_rpal_thread_info)(unsafe.Pointer(uintptr(unsafe.Pointer(recverRtp.rtis)) + uintptr(C.sizeof_rpal_thread_info_t*C.int(thread)))))
 	return int(ret)
 }
 
