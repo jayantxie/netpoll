@@ -63,6 +63,7 @@ type rpalBarrier struct {
 }
 
 var (
+	globalSenderRtp           *C.rpal_thread_pool_t
 	recverRtp                 *C.rpal_thread_pool_t
 	tcount                    int32 = -1
 	ClientNotRegisteredByRpal       = errors.New("client not registered by rpal")
@@ -123,6 +124,7 @@ func ClientRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 			return
 		} else {
 			c.senderRtp = senderRtp
+			globalSenderRtp = senderRtp
 		}
 		// write client rpal id
 		buf, err = zw.Malloc(5)
@@ -190,6 +192,7 @@ func ServerRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 			return
 		} else {
 			c.senderRtp = senderRtp
+			globalSenderRtp = senderRtp
 		}
 		// set sfd
 		c.sfd = rpalFdmap(c.fd)
@@ -270,6 +273,16 @@ func rpalCallAck(senderRtp *C.rpal_thread_pool_t, sfd int) (err error) {
 		return fmt.Errorf("error send call ack, sfd: %d, status: %d", sfd, status)
 	}
 	return nil
+}
+
+func RpalRecverDebug() {
+	C.rpal_recver_debug((*C.rpal_thread_pool_t)(unsafe.Pointer(recverRtp)))
+	return
+}
+
+func RpalSenderDebug() {
+	C.rpal_sender_debug(globalSenderRtp.nr_threads)
+	return
 }
 
 func writeInt32(buf []byte, id int) {
