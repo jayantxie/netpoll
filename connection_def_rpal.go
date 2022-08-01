@@ -114,7 +114,7 @@ func (c *connection) RpalFlush() error {
 	// 4. rpal call
 	// 5. Skip
 	// 6. Release
-	if !c.lock(flushing) {
+	if !c.IsActive() || !c.lock(flushing) {
 		return Exception(ErrConnClosed, "when flush")
 	}
 	defer c.unlock(flushing)
@@ -307,8 +307,8 @@ func (c *connection) closeBuffer() {
 	rpalBarrierPool.Put(c.outputObjectsBarrier)
 }
 
-// onRpalRequest is responsible for executing the closeCallbacks after the connection has been closed.
-func (c *connection) onRpalRequest() (needTrigger bool) {
+// onRequest is responsible for executing the closeCallbacks after the connection has been closed.
+func (c *connection) onRequest() (needTrigger bool) {
 	onRequest, ok := c.onRequestCallback.Load().(OnRequest)
 	if !ok {
 		return true
@@ -316,7 +316,7 @@ func (c *connection) onRpalRequest() (needTrigger bool) {
 	processed := c.onProcess(
 		// only process when conn active and have unread data
 		func(c *connection) bool {
-			return c.inputObjects.Len() > 0
+			return c.inputObjects.Len() > 0 || c.Reader().Len() > 0
 		},
 		func(c *connection) {
 			_ = onRequest(c.ctx, c)
@@ -331,15 +331,15 @@ func (c *connection) rpalInputs() (rs []unsafe.Pointer) {
 }
 
 func (c *connection) rpalInputAck(n int) (err error) {
-	if n < 0 {
-		n = 0
+	if n <= 0 {
+		return nil
 	}
 	for i := 0; i < n; i++ {
 		c.inputObjects.Write(c.inputObjectsBarrier.bs[i])
 		c.inputObjectsBarrier.bs[i] = nil
 	}
 	c.inputObjects.Flush()
-	if c.onRpalRequest() && n >= int(atomic.LoadInt32(&c.rpalWaitReadSize)) {
+	if c.onRequest() && n >= int(atomic.LoadInt32(&c.rpalWaitReadSize)) {
 		c.rpalTriggerRead()
 	}
 	return nil

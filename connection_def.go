@@ -94,6 +94,25 @@ func (c *connection) initFDOperator() {
 	c.operator = op
 }
 
+// onRequest is responsible for executing the closeCallbacks after the connection has been closed.
+func (c *connection) onRequest() (needTrigger bool) {
+	onRequest, ok := c.onRequestCallback.Load().(OnRequest)
+	if !ok {
+		return true
+	}
+	processed := c.onProcess(
+		// only process when conn active and have unread data
+		func(c *connection) bool {
+			return c.Reader().Len() > 0
+		},
+		func(c *connection) {
+			_ = onRequest(c.ctx, c)
+		},
+	)
+	// if not processed, should trigger read
+	return !processed
+}
+
 // onHup means close by poller.
 func (c *connection) onHup(p Poll) error {
 	if c.closeBy(poller) {
