@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build rpal && race
-// +build rpal,race
+//go:build race
+// +build race
 
 package netpoll
 

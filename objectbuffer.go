@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build rpal && !race
-// +build rpal,!race
+//go:build !race
+// +build !race
 
 package netpoll
 
@@ -26,7 +26,7 @@ import (
 
 type ObjectBuffer struct {
 	length int
-	head   *objectBufferNode // pointed node cannot be released
+	head   *objectBufferNode // pointed node has not been released
 	read   *objectBufferNode // pointed node has not been read
 	write  *objectBufferNode // pointed node has not been written
 	flush  *objectBufferNode // pointed node has not been flushed
