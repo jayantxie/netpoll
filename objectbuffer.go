@@ -21,12 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
 type ObjectBuffer struct {
-	length int
-	head   *objectBufferNode // pointed node has not been released
+	length int32
+	head   *objectBufferNode // pointed node cannot be released
 	read   *objectBufferNode // pointed node has not been read
 	write  *objectBufferNode // pointed node has not been written
 	flush  *objectBufferNode // pointed node has not been flushed
@@ -59,7 +60,7 @@ var objectPool = sync.Pool{
 }
 
 func (b *ObjectBuffer) GetSlice(p []unsafe.Pointer) []unsafe.Pointer {
-	if b.length == 0 {
+	if atomic.LoadInt32(&b.length) == 0 {
 		return nil
 	}
 	node, flush := b.read, b.flush
@@ -72,10 +73,10 @@ func (b *ObjectBuffer) GetSlice(p []unsafe.Pointer) []unsafe.Pointer {
 }
 
 func (b *ObjectBuffer) Skip(n int) error {
-	if b.length < n {
+	if atomic.LoadInt32(&b.length) < int32(n) {
 		return fmt.Errorf("object buffer skip[%d] not enough", n)
 	}
-	b.length -= n
+	atomic.AddInt32(&b.length, int32(-n))
 	for i := 0; i < n; i++ {
 		b.read = b.read.next
 	}
@@ -92,17 +93,17 @@ func (b *ObjectBuffer) Release() error {
 }
 
 func (b *ObjectBuffer) Read() (p unsafe.Pointer, err error) {
-	if b.length == 0 {
+	if atomic.LoadInt32(&b.length) == 0 {
 		return nil, errors.New("object buffer read not enough")
 	}
-	b.length--
+	atomic.AddInt32(&b.length, -1)
 	p = b.read.pointer
 	b.read = b.read.next
 	return
 }
 
 func (b *ObjectBuffer) Len() int {
-	return b.length
+	return int(atomic.LoadInt32(&b.length))
 }
 
 // ------------------------------------------ implement writer -------------------------------------------
@@ -120,12 +121,12 @@ func (b *ObjectBuffer) Flush() error {
 		n++
 	}
 	b.flush = b.write
-	b.length += n
+	atomic.AddInt32(&b.length, int32(n))
 	return nil
 }
 
 func (b *ObjectBuffer) Close() (err error) {
-	b.length = 0
+	atomic.StoreInt32(&b.length, 0)
 	for node := b.head; node != nil; {
 		nd := node
 		node = node.next

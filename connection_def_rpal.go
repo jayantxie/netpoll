@@ -339,7 +339,13 @@ func (c *connection) rpalInputAck(n int) (err error) {
 		c.inputObjectsBarrier.bs[i] = nil
 	}
 	c.inputObjects.Flush()
-	if c.onRequest() && n >= int(atomic.LoadInt32(&c.rpalWaitReadSize)) {
+
+	length := c.inputObjects.Len()
+	needTrigger := true
+	if length == n { // first start onRequest
+		needTrigger = c.onRequest()
+	}
+	if needTrigger && length >= int(atomic.LoadInt32(&c.rpalWaitReadSize)) {
 		c.rpalTriggerRead()
 	}
 	return nil
