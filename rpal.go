@@ -137,8 +137,10 @@ func ClientRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 			errChan <- err
 			return
 		}
-		// set sfd
-		c.sfd = rpalFdmap(c.fd)
+		// set gpollId and sfd
+		res := rpalFdmap(serverRpalId, c.fd)
+		c.gpollId = int(res >> 32)
+		c.sfd = int(res & 0xffffffff)
 		errChan <- nil
 	})
 	select {
@@ -194,8 +196,10 @@ func ServerRpalHandshake(conn Connection, timeout time.Duration) (err error) {
 			c.senderRtp = senderRtp
 			globalSenderRtp = senderRtp
 		}
-		// set sfd
-		c.sfd = rpalFdmap(c.fd)
+		// set gpollId and sfd
+		res := rpalFdmap(clientRpalId, c.fd)
+		c.gpollId = int(res >> 32)
+		c.sfd = int(res & 0xffffffff)
 		errChan <- nil
 	})
 
@@ -242,14 +246,15 @@ func rpalRequestService(id int) (*C.rpal_thread_pool_t, int) {
 	return &senderRtp, int(retVal)
 }
 
-func rpalFdmap(cfd int) int {
-	sfd := C.rpal_uds_fdmap(C.int(cfd))
-	return int(sfd)
+func rpalFdmap(sid, cfd int) int64 {
+	sfd := C.rpal_uds_fdmap(C.int(sid), C.int(cfd))
+	return int64(sfd)
 }
 
-func rpalSendMsg(senderRtp *C.rpal_thread_pool_t, sfd int, objs []unsafe.Pointer) (err error) {
+func rpalSendMsg(senderRtp *C.rpal_thread_pool_t, sfd, gpollId int, objs []unsafe.Pointer) (err error) {
 	status := int(C.rpal_write_msg(runtime.RpalTkey, senderRtp,
 		C.int(sfd),
+		C.int(gpollId),
 		(*C.uintptr_t)(unsafe.Pointer(&objs[0])),
 		C.int(len(objs)),
 	))
@@ -267,8 +272,8 @@ func rpalReadMsg(fd int, bs []unsafe.Pointer) (n int, err error) {
 	return
 }
 
-func rpalCallAck(senderRtp *C.rpal_thread_pool_t, sfd int) (err error) {
-	status := C.rpal_call_ack(runtime.RpalTkey, senderRtp, C.int(sfd))
+func rpalCallAck(senderRtp *C.rpal_thread_pool_t, sfd, gpollId int) (err error) {
+	status := C.rpal_call_ack(runtime.RpalTkey, senderRtp, C.int(sfd), C.int(gpollId))
 	if int(status) != 0 {
 		return fmt.Errorf("error send call ack, sfd: %d, status: %d", sfd, status)
 	}

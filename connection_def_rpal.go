@@ -53,6 +53,8 @@ type connection struct {
 	bookSize        int // The size of data that can be read at once.
 
 	// rpal
+	sfd                  int
+	gpollId              int
 	rpalReadTimer        *time.Timer
 	rpalReadTrigger      chan struct{}
 	rpalWaitReadSize     int32
@@ -104,7 +106,7 @@ func (c *connection) RpalRelease() (err error) {
 	if err != nil {
 		return Exception(err, "when rpal release")
 	}
-	return rpalCallAck(c.senderRtp, c.sfd)
+	return rpalCallAck(c.senderRtp, c.sfd, c.gpollId)
 }
 
 func (c *connection) RpalFlush() error {
@@ -220,6 +222,7 @@ func (c *connection) init(conn Conn, opts *options) (err error) {
 	c.inputObjects, c.outputObjects = NewObjectBuffer(), NewObjectBuffer()
 	c.inputObjectsBarrier, c.outputObjectsBarrier = rpalBarrierPool.Get().(*rpalBarrier), rpalBarrierPool.Get().(*rpalBarrier)
 
+	c.sfd = -1
 	c.initNetFD(conn) // conn must be *netFD{}
 	c.initFDOperator()
 	c.initFinalizer()
@@ -358,7 +361,7 @@ func (c *connection) rpalOutputAck() (err error) {
 
 func (c *connection) rpalflush() (err error) {
 	objs := c.outputObjects.GetSlice(c.outputObjectsBarrier.bs)
-	err = c.rpalsendmsg(c.fd, c.sfd, objs)
+	err = c.rpalsendmsg(objs)
 	if err != nil {
 		return Exception(err, "when rpal flush")
 	}
@@ -373,11 +376,11 @@ func (c *connection) rpalflush() (err error) {
 	return
 }
 
-func (c *connection) rpalsendmsg(fd, sfd int, objs []unsafe.Pointer) (err error) {
+func (c *connection) rpalsendmsg(objs []unsafe.Pointer) (err error) {
 	if len(objs) == 0 {
 		return nil
 	}
-	err = rpalSendMsg(c.senderRtp, sfd, objs)
+	err = rpalSendMsg(c.senderRtp, c.sfd, c.gpollId, objs)
 	if err != nil {
 		return err
 	}

@@ -31,8 +31,7 @@ var (
 
 type netFD struct {
 	// file descriptor
-	fd  int
-	sfd int
+	fd int
 	// When calling netFD.dial(), fd will be registered into poll in some scenarios, such as dialing tcp socket,
 	// but not in other scenarios, such as dialing unix socket.
 	// This leads to a different behavior in register poller at after, so use this field to mark it.
@@ -54,7 +53,7 @@ type netFD struct {
 }
 
 func newNetFD(fd, family, sotype int, net string) *netFD {
-	var ret = &netFD{}
+	ret := &netFD{}
 	ret.fd = fd
 	ret.network = net
 	ret.family = family

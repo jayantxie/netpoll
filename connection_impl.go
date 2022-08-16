@@ -274,7 +274,6 @@ func (c *connection) initNetFD(conn Conn) {
 	}
 	c.netFD = netFD{
 		fd:         conn.Fd(),
-		sfd:        -1,
 		localAddr:  conn.LocalAddr(),
 		remoteAddr: conn.RemoteAddr(),
 	}
