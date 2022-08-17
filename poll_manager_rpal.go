@@ -39,7 +39,7 @@ func init() {
 	if loops == 0 {
 		loops = runtime.GOMAXPROCS(0)
 	}
-	loops = loops/20 + 1
+	// loops = loops/20 + 1
 	pollmanager = &manager{}
 	pollmanager.SetLoadBalance(RoundRobin)
 	pollmanager.SetNumLoops(loops)
