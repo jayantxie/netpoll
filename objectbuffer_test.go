@@ -45,7 +45,7 @@ func TestObjectBuffer(t *testing.T) {
 	Assert(t, buffer.Len() == 1)
 
 	// release the first node
-	err = buffer.Release()
+	err = buffer.Release(false)
 	MustNil(t, err)
 
 	c := &MockA{Str: "mock c"}
@@ -86,6 +86,6 @@ func TestObjectBuffer(t *testing.T) {
 	Assert(t, buffer.Len() == 0)
 
 	// release the rest three nodes
-	err = buffer.Release()
+	err = buffer.Release(false)
 	MustNil(t, err)
 }

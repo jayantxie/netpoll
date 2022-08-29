@@ -25,6 +25,14 @@ import (
 	"unsafe"
 )
 
+type OnObjectRelease func(pointer unsafe.Pointer)
+
+var onObjectRelease OnObjectRelease
+
+func RegisterOnObjectRelease(f OnObjectRelease) {
+	onObjectRelease = f
+}
+
 type ObjectBuffer struct {
 	length int32
 	head   *objectBufferNode // pointed node cannot be released
@@ -83,10 +91,13 @@ func (b *ObjectBuffer) Skip(n int) error {
 	return nil
 }
 
-func (b *ObjectBuffer) Release() error {
+func (b *ObjectBuffer) Release(callback bool) error {
 	for b.head != b.read {
 		node := b.head
 		b.head = b.head.next
+		if callback && onObjectRelease != nil {
+			onObjectRelease(node.pointer)
+		}
 		node.Release()
 	}
 	return nil

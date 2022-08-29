@@ -144,8 +144,6 @@ func (p *defaultPoll) handler(events []syscall.EpollEvent) (closed bool) {
 							continue
 						}
 					}
-				} else if evt&EPOLLRPALACK != 0 {
-					operator.RpalOutputAck()
 				} else {
 					bs := operator.Inputs(p.barriers[i].bs)
 					if len(bs) > 0 {

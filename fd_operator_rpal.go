@@ -40,9 +40,8 @@ type FDOperator struct {
 	InputAck func(n int) (err error)
 
 	// RpalInputs return ptrs to connection.
-	RpalInputs    func() (rs []unsafe.Pointer)
-	RpalInputAck  func(n int) (err error)
-	RpalOutputAck func() (err error)
+	RpalInputs   func() (rs []unsafe.Pointer)
+	RpalInputAck func(n int) (err error)
 
 	// Outputs will locked if len(rs) > 0, which need unlocked by OutputAck.
 	Outputs   func(vs [][]byte) (rs [][]byte, supportZeroCopy bool)
@@ -96,6 +95,5 @@ func (op *FDOperator) reset() {
 	op.Inputs, op.InputAck = nil, nil
 	op.Outputs, op.OutputAck = nil, nil
 	op.RpalInputs, op.RpalInputAck = nil, nil
-	op.RpalOutputAck = nil
 	op.poll = nil
 }

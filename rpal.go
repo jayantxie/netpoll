@@ -52,8 +52,7 @@ const (
 	// #define EPOLLWRBAND	(__force __poll_t)0x00000200
 	// #define EPOLLMSG	(__force __poll_t)0x00000400
 	// #define EPOLLRDHUP	(__force __poll_t)0x00002000
-	EPOLLRPALIN  uint32 = 0x00020000
-	EPOLLRPALACK uint32 = 0x00040000
+	EPOLLRPALIN uint32 = 0x00020000
 )
 
 const rpalbarriercap = 32
@@ -272,21 +271,13 @@ func rpalReadMsg(fd int, bs []unsafe.Pointer) (n int, err error) {
 	return
 }
 
-func rpalCallAck(senderRtp *C.rpal_thread_pool_t, sfd, gpollId int) (err error) {
-	status := C.rpal_call_ack(runtime.RpalTkey, senderRtp, C.int(sfd), C.int(gpollId))
-	if int(status) != 0 {
-		return fmt.Errorf("error send call ack, sfd: %d, status: %d", sfd, status)
-	}
-	return nil
-}
-
 func RpalRecverDebug() {
-	C.rpal_recver_debug((*C.rpal_thread_pool_t)(unsafe.Pointer(recverRtp)))
+	// C.rpal_recver_debug((*C.rpal_thread_pool_t)(unsafe.Pointer(recverRtp)))
 	return
 }
 
 func RpalSenderDebug() {
-	C.rpal_sender_debug(globalSenderRtp.nr_threads)
+	// C.rpal_sender_debug(globalSenderRtp.nr_threads)
 	return
 }
 

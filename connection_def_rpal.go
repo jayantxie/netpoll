@@ -58,7 +58,6 @@ type connection struct {
 	rpalReadTimer        *time.Timer
 	rpalReadTrigger      chan struct{}
 	rpalWaitReadSize     int32
-	rpalWrittenTrigger   chan error
 	inputObjects         *ObjectBuffer
 	outputObjects        *ObjectBuffer
 	inputObjectsBarrier  *rpalBarrier
@@ -102,11 +101,11 @@ func (c *connection) RpalRelease() (err error) {
 	// inputObjects:
 	// 1. Release
 	// 2. notify client
-	err = c.inputObjects.Release()
+	err = c.inputObjects.Release(false)
 	if err != nil {
 		return Exception(err, "when rpal release")
 	}
-	return rpalCallAck(c.senderRtp, c.sfd, c.gpollId)
+	return
 }
 
 func (c *connection) RpalFlush() error {
@@ -120,6 +119,12 @@ func (c *connection) RpalFlush() error {
 		return Exception(ErrConnClosed, "when flush")
 	}
 	defer c.unlock(flushing)
+	// release previous data before flush
+	// TODO: in mux scene?
+	err := c.outputObjects.Release(true)
+	if err != nil {
+		return Exception(err, "when rpal flush")
+	}
 	c.outputObjects.Flush()
 	return c.rpalflush()
 }
@@ -181,13 +186,6 @@ func (c *connection) rpalTriggerRead() {
 	}
 }
 
-func (c *connection) rpalTriggerWritten(err error) {
-	select {
-	case c.rpalWrittenTrigger <- err:
-	default:
-	}
-}
-
 // ------------------------------------------ private ------------------------------------------
 
 var barrierPool = sync.Pool{
@@ -218,7 +216,6 @@ func (c *connection) init(conn Conn, opts *options) (err error) {
 
 	// init rpal buffer, barrier, finalizer
 	c.rpalReadTrigger = make(chan struct{}, 1)
-	c.rpalWrittenTrigger = make(chan error, 1)
 	c.inputObjects, c.outputObjects = NewObjectBuffer(), NewObjectBuffer()
 	c.inputObjectsBarrier, c.outputObjectsBarrier = rpalBarrierPool.Get().(*rpalBarrier), rpalBarrierPool.Get().(*rpalBarrier)
 
@@ -249,7 +246,6 @@ func (c *connection) initFDOperator() {
 	op.Inputs, op.InputAck = c.inputs, c.inputAck
 	op.Outputs, op.OutputAck = c.outputs, c.outputAck
 	op.RpalInputs, op.RpalInputAck = c.rpalInputs, c.rpalInputAck
-	op.RpalOutputAck = c.rpalOutputAck
 
 	// if connection has been registered, must reuse poll here.
 	if c.pd != nil && c.pd.operator != nil {
@@ -264,7 +260,6 @@ func (c *connection) onHup(p Poll) error {
 		c.triggerRead()
 		c.triggerWrite(ErrConnClosed)
 		c.rpalTriggerRead()
-		c.rpalTriggerWritten(ErrConnClosed)
 		// It depends on closing by user if OnConnect and OnRequest is nil, otherwise it needs to be released actively.
 		// It can be confirmed that the OnRequest goroutine has been exited before closecallback executing,
 		// and it is safe to close the buffer at this time.
@@ -283,7 +278,6 @@ func (c *connection) onClose() error {
 		c.triggerRead()
 		c.triggerWrite(ErrConnClosed)
 		c.rpalTriggerRead()
-		c.rpalTriggerWritten(ErrConnClosed)
 		c.closeCallback(true)
 		return nil
 	}
@@ -354,22 +348,13 @@ func (c *connection) rpalInputAck(n int) (err error) {
 	return nil
 }
 
-func (c *connection) rpalOutputAck() (err error) {
-	c.rpalTriggerWritten(nil)
-	return nil
-}
-
 func (c *connection) rpalflush() (err error) {
 	objs := c.outputObjects.GetSlice(c.outputObjectsBarrier.bs)
-	err = c.rpalsendmsg(objs)
-	if err != nil {
-		return Exception(err, "when rpal flush")
-	}
 	err = c.outputObjects.Skip(len(objs))
 	if err != nil {
 		return Exception(err, "when rpal flush")
 	}
-	err = c.outputObjects.Release()
+	err = c.rpalsendmsg(objs)
 	if err != nil {
 		return Exception(err, "when rpal flush")
 	}
@@ -380,11 +365,5 @@ func (c *connection) rpalsendmsg(objs []unsafe.Pointer) (err error) {
 	if len(objs) == 0 {
 		return nil
 	}
-	err = rpalSendMsg(c.senderRtp, c.sfd, c.gpollId, objs)
-	if err != nil {
-		return err
-	}
-	// TODO: what if connection close while server is still copying?
-	err = <-c.rpalWrittenTrigger
-	return err
+	return rpalSendMsg(c.senderRtp, c.sfd, c.gpollId, objs)
 }
