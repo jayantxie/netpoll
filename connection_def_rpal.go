@@ -26,12 +26,17 @@ package netpoll
 import "C"
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/bytedance/gopkg/util/gopool"
 )
+
+var runTaskLazyWake = gopool.CtxGoLazyWake
 
 // connection is the implement of Connection
 type connection struct {
@@ -186,6 +191,10 @@ func (c *connection) rpalTriggerRead() {
 	}
 }
 
+func (c *connection) rpalLazyTriggerRead() {
+	runtime.SelectnbSendLazyWake(c.rpalReadTrigger, unsafe.Pointer(&struct{}{}))
+}
+
 // ------------------------------------------ private ------------------------------------------
 
 var barrierPool = sync.Pool{
@@ -323,6 +332,64 @@ func (c *connection) onRequest() (needTrigger bool) {
 	return !processed
 }
 
+// onRpalProcess is responsible for executing the process function serially,
+// and make sure the connection has been closed correctly if user call c.Close() in process function.
+func (c *connection) onRpalProcess(isProcessable func(c *connection) bool, process func(c *connection)) (processed bool) {
+	if process == nil {
+		return false
+	}
+	// task already exists
+	if !c.lock(processing) {
+		return false
+	}
+	// add new task
+	task := func() {
+	START:
+		// `process` must be executed at least once if `isProcessable` in order to cover the `send & close by peer` case.
+		// Then the loop processing must ensure that the connection `IsActive`.
+		if isProcessable(c) {
+			process(c)
+		}
+		for c.IsActive() && isProcessable(c) {
+			process(c)
+		}
+		// Handling callback if connection has been closed.
+		if !c.IsActive() {
+			c.closeCallback(false)
+			return
+		}
+		c.unlock(processing)
+		// Double check when exiting.
+		if isProcessable(c) && c.lock(processing) {
+			goto START
+		}
+		// task exits
+		return
+	}
+
+	runTaskLazyWake(c.ctx, task)
+	return true
+}
+
+// onRpalRequest is responsible for executing the closeCallbacks after the connection has been closed.
+func (c *connection) onRpalRequest() (needTrigger bool) {
+	onRequest, ok := c.onRequestCallback.Load().(OnRequest)
+	if !ok {
+		return true
+	}
+	processed := c.onRpalProcess(
+		// only process when conn active and have unread data
+		func(c *connection) bool {
+			return c.inputObjects.Len() > 0 || c.Reader().Len() > 0
+		},
+		func(c *connection) {
+			_ = onRequest(c.ctx, c)
+		},
+	)
+	// if not processed, should trigger read
+	return !processed
+}
+
 func (c *connection) rpalInputs() (rs []unsafe.Pointer) {
 	return c.inputObjectsBarrier.bs
 }
@@ -340,10 +407,10 @@ func (c *connection) rpalInputAck(n int) (err error) {
 	length := c.inputObjects.Len()
 	needTrigger := true
 	if length == n { // first start onRequest
-		needTrigger = c.onRequest()
+		needTrigger = c.onRpalRequest()
 	}
 	if needTrigger && length >= int(atomic.LoadInt32(&c.rpalWaitReadSize)) {
-		c.rpalTriggerRead()
+		c.rpalLazyTriggerRead()
 	}
 	return nil
 }
