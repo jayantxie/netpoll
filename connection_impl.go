@@ -287,6 +287,11 @@ func (c *connection) Close() error {
 	return c.onClose()
 }
 
+// Detach implements Connection.
+func (c *connection) Detach() error {
+	return c.onDetach()
+}
+
 // ------------------------------------------ private ------------------------------------------
 
 var barrierPool = sync.Pool{
@@ -358,7 +363,11 @@ func (c *connection) initFinalizer() {
 		// stop the finalizing state to prevent conn.fill function to be performed
 		c.stop(finalizing)
 		freeop(c.operator)
-		c.netFD.Close()
+		if c.isCloseBy(rpal) {
+			c.netFD.DummyClose()
+		} else {
+			c.netFD.Close()
+		}
 		c.closeBuffer()
 		return nil
 	})
