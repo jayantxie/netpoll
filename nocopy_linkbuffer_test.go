@@ -454,6 +454,7 @@ func TestWriteDirect(t *testing.T) {
 	buf.WriteDirect([]byte("nopqrst"), 28)
 	bt[4] = 'u'
 	buf.WriteDirect([]byte("vwxyz"), 27)
+	buf.WriteDirect([]byte("abcdefghijklmnopqrstuvwxyza"), 0)
 	buf.Flush()
 	bs := buf.Bytes()
 	str := "abcdefghijklmnopqrstuvwxyz"
