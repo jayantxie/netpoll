@@ -30,21 +30,13 @@ func TestRuntimePoll(t *testing.T) {
 	ln, err := CreateListener("tcp", ":1234")
 	MustNil(t, err)
 
-	stop := make(chan int, 1)
-	defer close(stop)
+	defer ln.Close()
 
 	go func() {
 		for {
-			select {
-			case <-stop:
-				err := ln.Close()
-				MustNil(t, err)
+			_, err := ln.Accept()
+			if err != nil {
 				return
-			default:
-			}
-			conn, err := ln.Accept()
-			if conn == nil && err == nil {
-				continue
 			}
 		}
 	}()
