@@ -299,9 +299,10 @@ func (c *connection) Close() error {
 	return c.onClose()
 }
 
-// Detach implements Connection.
-func (c *connection) Detach() error {
-	return c.onDetach()
+// DetachPoller detaches the connection from poller.
+func (c *connection) DetachPoller() error {
+	c.detaching = true
+	return c.onClose()
 }
 
 // ------------------------------------------ private ------------------------------------------
@@ -376,14 +377,8 @@ func (c *connection) initFinalizer() {
 	c.AddCloseCallback(func(connection Connection) (err error) {
 		c.stop(flushing)
 		c.operator.Free()
-		if c.isCloseBy(rpal) {
-			if err = c.netFD.DummyClose(); err != nil {
-				logger.Printf("NETPOLL: netFD dummy close failed: %v", err)
-			}
-		} else {
-			if err = c.netFD.Close(); err != nil {
-				logger.Printf("NETPOLL: netFD close failed: %v", err)
-			}
+		if err = c.netFD.Close(); err != nil {
+			logger.Printf("NETPOLL: netFD close failed: %v", err)
 		}
 		c.closeBuffer()
 		return nil
