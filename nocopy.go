@@ -20,7 +20,6 @@ import (
 	"unsafe"
 
 	"github.com/bytedance/gopkg/lang/dirtmake"
-	"github.com/bytedance/gopkg/lang/mcache"
 )
 
 // Reader is a collection of operations for nocopy reads.
@@ -287,16 +286,10 @@ func unsafeStringToSlice(s string) (b []byte) {
 
 // malloc limits the cap of the buffer from mcache.
 func malloc(size, capacity int) []byte {
-	if capacity > mallocMax {
-		return dirtmake.Bytes(size, capacity)
-	}
-	return mcache.Malloc(size, capacity)
+	return dirtmake.Bytes(size, capacity)
 }
 
 // free limits the cap of the buffer from mcache.
 func free(buf []byte) {
-	if cap(buf) > mallocMax {
-		return
-	}
-	mcache.Free(buf)
+	return
 }
