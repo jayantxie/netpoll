@@ -18,7 +18,9 @@ package netpoll
 
 import (
 	"math/bits"
+	"reflect"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/bytedance/gopkg/lang/dirtmake"
 )
@@ -88,6 +90,8 @@ START:
 	if b.read <= b.size {
 		buf := b.buffer[b.read-n : b.read]
 		atomic.StoreUint32(&b.lock, 0)
+		rbuf := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
+		rbuf.Cap = rbuf.Len
 		return buf
 	}
 	// slow path: create a new buffer
